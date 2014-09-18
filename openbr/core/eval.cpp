@@ -263,7 +263,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     lines.append("Metadata,"+QString::number(genuineCount)+",Genuine");
     lines.append("Metadata,"+QString::number(impostorCount)+",Impostor");
     lines.append("Metadata,"+QString::number(simmat.cols*simmat.rows-(genuineCount+impostorCount))+",Ignored");
-
+    
     QString filePath = Globals->path;
     if (matches != 0) {
         const FileList targetFiles = TemplateList::fromGallery(target).files();
@@ -310,6 +310,18 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     lines.append(qPrintable(QString("BC,0.001,%1").arg(QString::number(getTAR(operatingPoints, 0.001), 'f', 3))));
     lines.append(qPrintable(QString("BC,0.01,%1").arg(QString::number(result = getTAR(operatingPoints, 0.01), 'f', 3))));
 
+    // Attempt to read template size from enrolled gallery and write to output CSV
+    size_t maxSize(0);
+    if (target.endsWith(".gal") && matches != 0) {
+        TemplateList templates = TemplateList::fromGallery(target);
+        for (int i=0; i<templates.size(); i++) {
+            size_t size = templates[i].bytes();
+            if (maxSize < size) maxSize = size;
+        }
+    }
+    
+    lines.append(QString("TS,,%1").arg(QString::number(maxSize)));
+
     // Write SD & KDE
     points = qMin(qMin(Max_Points, genuines.size()), impostors.size());
     QList<double> sampledGenuineScores; sampledGenuineScores.reserve(points);
@@ -337,6 +349,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     }
 
     QtUtils::writeFile(csv, lines);
+    qDebug("Template Size: %i bytes", (int)maxSize);
     qDebug("TAR @ FAR = 0.01:    %.3f",getTAR(operatingPoints, 0.01));
     qDebug("TAR @ FAR = 0.001:   %.3f",getTAR(operatingPoints, 0.001));
     qDebug("TAR @ FAR = 0.0001:  %.3f",getTAR(operatingPoints, 0.0001));
