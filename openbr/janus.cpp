@@ -1,5 +1,5 @@
-#include "janus.h"
-#include "janus_io.h"
+#include "iarpa_janus.h"
+#include "iarpa_janus_io.h"
 #include "openbr_plugin.h"
 #include "openbr/core/opencvutils.h"
 #include "openbr/core/common.h"
@@ -74,7 +74,7 @@ janus_error janus_augment(const janus_image image, const janus_attribute_list at
     return (u.isEmpty() || !u.first().data) ? JANUS_FAILURE_TO_ENROLL : JANUS_SUCCESS;
 }
 
-janus_error janus_flatten(janus_template template_, janus_flat_template flat_template, size_t *bytes)
+janus_error janus_flatten_template(janus_template template_, janus_flat_template flat_template, size_t *bytes)
 {    
     *bytes = 0;
     foreach (const cv::Mat &m, *template_) {
@@ -95,6 +95,42 @@ janus_error janus_flatten(janus_template template_, janus_flat_template flat_tem
         memcpy(flat_template, m.data, templateBytes);
         flat_template += templateBytes;
         *bytes += templateBytes;
+    }
+    return JANUS_SUCCESS;
+}
+
+janus_error janus_flatten_gallery(janus_gallery gallery, janus_flat_gallery flat_gallery, size_t *bytes)
+{
+    *bytes = 0;
+    foreach (const Template &t, TemplateList::fromGallery(gallery)) {
+        janus_flat_template u = new janus_data[janus_max_template_size()];
+        size_t t_bytes = 0;
+        foreach (const cv::Mat &m, t) {
+            if (!m.data)
+                continue;
+
+            if (!m.isContinuous())
+                return JANUS_UNKNOWN_ERROR;
+
+            const size_t templateBytes = m.rows * m.cols * m.elemSize();
+            if (*bytes + sizeof(size_t) + templateBytes > janus_max_template_size())
+                break;
+
+            memcpy(u, &templateBytes, sizeof(templateBytes));
+            u += sizeof(templateBytes);
+            t_bytes += sizeof(templateBytes);
+
+            memcpy(u, m.data, templateBytes);
+            u += templateBytes;
+            t_bytes += templateBytes;
+        }
+        memcpy(flat_gallery, &t_bytes, sizeof(t_bytes));
+        flat_gallery += sizeof(t_bytes);
+        *bytes += sizeof(t_bytes);
+
+        memcpy(flat_gallery, u, t_bytes);
+        flat_gallery += t_bytes;
+        *bytes += t_bytes;
     }
     return JANUS_SUCCESS;
 }
@@ -156,7 +192,7 @@ janus_error janus_gallery_size(janus_gallery gallery, size_t *size)
     return JANUS_SUCCESS;
 }
 
-janus_error janus_search(const janus_template template_, janus_gallery gallery, int requested_returns, janus_template_id *template_ids, float *similarities, int *actual_returns)
+janus_error janus_search(const janus_template template_, janus_flat_gallery gallery, size_t gallery_bytes, int requested_returns, janus_template_id *template_ids, float *similarities, int *actual_returns)
 {
     TemplateList query;
     query.append(*template_);
@@ -184,7 +220,7 @@ janus_error janus_search(const janus_template template_, janus_gallery gallery, 
     return JANUS_SUCCESS;
 }
 
-janus_error janus_compare(janus_gallery target, janus_gallery query, float *similarity_matrix, janus_template_id *target_ids, janus_template_id *query_ids)
+janus_error janus_compare(janus_flat_gallery target, size_t target_bytes, janus_flat_gallery query, size_t query_bytes, float *similarity_matrix, janus_template_id *target_ids, janus_template_id *query_ids)
 {
     const TemplateList targets = TemplateList::fromGallery(target);
     const TemplateList queries = TemplateList::fromGallery(query);
