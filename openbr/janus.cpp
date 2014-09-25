@@ -103,6 +103,7 @@ janus_error janus_flatten_gallery(janus_gallery gallery, janus_flat_gallery flat
 {
     *bytes = 0;
     foreach (const Template &t, TemplateList::fromGallery(gallery)) {
+        janus_template_id template_id = t.file.get<janus_template_id>("TEMPLATE_ID");
         janus_flat_template u = new janus_data[janus_max_template_size()];
         size_t t_bytes = 0;
         foreach (const cv::Mat &m, t) {
@@ -124,6 +125,7 @@ janus_error janus_flatten_gallery(janus_gallery gallery, janus_flat_gallery flat
             u += templateBytes;
             t_bytes += templateBytes;
         }
+        memcpy(flat_gallery, &template_id, sizeof(template_id));
         memcpy(flat_gallery, &t_bytes, sizeof(t_bytes));
         flat_gallery += sizeof(t_bytes);
         *bytes += sizeof(t_bytes);
@@ -194,29 +196,43 @@ janus_error janus_gallery_size(janus_gallery gallery, size_t *size)
 
 janus_error janus_search(const janus_template template_, janus_flat_gallery gallery, size_t gallery_bytes, int requested_returns, janus_template_id *template_ids, float *similarities, int *actual_returns)
 {
-    TemplateList query;
-    query.append(*template_);
+    janus_flat_template query = new janus_data[janus_max_template_size()];
+    size_t query_size;
+    JANUS_ASSERT(janus_flatten_template(template_, query, &query_size))
 
-    const TemplateList targets = TemplateList::fromGallery(gallery);
+    typedef QPair<float, int> Pair;
+    QList<Pair> comparisons; comparisons.reserve(requested_returns);
+    janus_flat_gallery target_gallery = gallery;
+    while (target_gallery < gallery + gallery_bytes) {
+        janus_template_id target_id = *reinterpret_cast<janus_template_id*>(target_gallery);
+        target_gallery += sizeof(janus_template_id);
 
-    if (targets.size() < requested_returns) *actual_returns = targets.size();
+        const size_t target_gallery_bytes = *reinterpret_cast<size_t*>(target_gallery);
+        target_gallery += sizeof(target_gallery_bytes);
+        janus_flat_template target = new janus_data[janus_max_template_size()];
+        memcpy(target, &target_gallery_bytes, sizeof(target_gallery_bytes));
+        memcpy(target, &target_gallery, target_gallery_bytes);
+
+        float similarity;
+        JANUS_ASSERT(janus_verify(query, query_size, target, target_gallery_bytes, &similarity))
+        if (comparisons.size() < requested_returns){
+            comparisons.append(Pair(similarity, target_id));
+            std::sort(comparisons.begin(), comparisons.end());
+        } else {
+            comparisons.removeLast();
+            comparisons.append(Pair(similarity, target_id));
+            std::sort(comparisons.begin(), comparisons.end());
+        }
+
+    }
+
+    if (comparisons.size() < requested_returns) *actual_returns = comparisons.size();
     else                                    *actual_returns = requested_returns;
 
-    QScopedPointer<MatrixOutput> matrix(MatrixOutput::make(targets.files(), query.files()));
-    distance->compare(targets, query, matrix.data());
-
-    typedef QPair<float,int> Pair;
-    QList<Pair> sortedSimilarities = Common::Sort(OpenCVUtils::matrixToVector<float>(matrix.data()->data.row(0)), true, *actual_returns);
-
-    FileList targetFiles;
-    for (int i=0; i<sortedSimilarities.size(); i++) {
-        matrix.data()->data.at<float>(0,i) = sortedSimilarities[i].first;
-        targetFiles.append(targets[sortedSimilarities[i].second]);
+    foreach(const Pair &comparison, comparisons) {
+        memcpy(similarities, &comparison.first, sizeof(comparison.first));
+        memcpy(template_ids, &comparison.second, sizeof(comparison.second));
     }
-    const QVector<janus_template_id> targetIds = File::get<janus_template_id,File>(targetFiles, "TEMPLATE_ID").toVector();
-
-    memcpy(similarities, matrix->data.data, *actual_returns * sizeof(float));
-    memcpy(template_ids, targetIds.data(), *actual_returns * sizeof(janus_template_id));
     return JANUS_SUCCESS;
 }
 
